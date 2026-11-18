@@ -28,20 +28,23 @@ plateau, not a single fitted point.
 ## Verified dev-window results (local grade, kit harness, process driver)
 
 ```
-Net PnL:        +$12.65  (+1.265%)
+Net PnL:        +$17.63  (+1.763%)
 Trades:         4
-Max drawdown:   0.67%  (limit 25%)
-Net PnL at 2x fees: +$11.04  (still profitable if fees doubled)
+Max drawdown:   0.93%  (limit 25%)
+Net PnL at 2x fees: +$16.00  (still profitable if fees doubled)
 Constraints:    compliant (min 1 trade, drawdown OK)
 Determinism:    two executions reproduced byte-for-byte
-                (result_sha256 34c1ece2bb8953676478b8e11eb2e6f6d752f91f1f633925ecfa0928b1337550)
 ```
+
+Step-down take profit (bank +0.6% after 120 bars held) and a 60-bar
+re-entry cooldown after any exit lifted the dev PnL from +$12.65 to
++$17.63 on the same window, with the same 4 trades.
 
 House baselines on the same dev window, for comparison:
 
 | bot | net PnL |
 |---|---|
-| this bot | **+$12.65** |
+| this bot | **+$17.63** |
 | hold-cash | $0.00 |
 | momentum | -$23.87 |
 | buy-and-hold | -$31.63 |

@@ -6,6 +6,11 @@
 //     ago AND the 14-bar Wilder RSI is below 40. One full-size buy (all cash).
 //   * Exit: take profit at +1.0% of cost, stop loss at -0.5% of cost, or
 //     after 360 bars held, whichever comes first. Sells the whole position.
+//     Step-down: once a position has been held 120 bars, the take profit
+//     steps down to +0.6%, banking a slow rebound instead of waiting out
+//     the full 6 hours and risking a round trip back to the stop.
+//   * After any exit, no new entry for 60 bars (re-entry cooldown), so a
+//     stopped-out dip is not chased again on the same bars.
 //   * No new entries in the last 20 scored bars (a fill on the final bar
 //     would be flattened immediately at a loss).
 //
@@ -43,6 +48,9 @@ const TP_DEN = 100;
 const SL_NUM = 995; // stop loss: position value <= cost * 995/1000 (-0.5%)
 const SL_DEN = 1000;
 const MAX_HOLD_BARS = 360; // 6 hours
+const SOFT_TP_AFTER_BARS = 120; // after 2 hours held, bank a smaller rebound
+const TP_SOFT_NUM = 1006; // soft take profit: +0.6% of cost once held 120+ bars
+const REENTRY_COOLDOWN_BARS = 60; // after any exit, wait 60 bars before a new entry
 const NO_ENTRY_AFTER_SCORED_BAR = 1420; // dev/race windows are 1,440 bars
 const MAX_SLIPPAGE_BPS = 200; // 2%: wide enough for the 1-min open gap, tight enough to refuse a blowout fill
 
@@ -55,6 +63,8 @@ let rsiBarsSeen = 0;
 let rsi: number | null = null;
 // The batch seq at which the current position was decided (null when flat).
 let entrySeq: number | null = null;
+// The batch seq of the most recent exit (null until the first exit).
+let lastExitSeq: number | null = null;
 
 function pushClose(closeRaw: bigint, priceScale: number): void {
   const prev = closes.length > 0 ? closes[closes.length - 1] : null;
@@ -95,11 +105,17 @@ await runBars({
       if (entrySeq === null) entrySeq = batch.seq; // position appeared (e.g. after a rejected-entry retry); anchor the hold clock now
       const value = state.value(SYMBOL, held.qty);
       const cost = held.cost;
-      const takeProfit = value * BigInt(TP_DEN) >= cost * BigInt(TP_NUM);
+      const heldBars = entrySeq === null ? 0 : batch.seq - entrySeq;
+      // Step-down take profit: a rebound that has not reached +1.0% after
+      // 2 hours is banked at +0.6% instead of waiting the full 6 hours and
+      // risking a round trip back to the stop.
+      const tpNum = heldBars >= SOFT_TP_AFTER_BARS ? TP_SOFT_NUM : TP_NUM;
+      const takeProfit = value * BigInt(TP_DEN) >= cost * BigInt(tpNum);
       const stopLoss = value * BigInt(SL_DEN) <= cost * BigInt(SL_NUM);
       const tooLong = batch.seq - entrySeq >= MAX_HOLD_BARS;
       if (takeProfit || stopLoss || tooLong) {
         entrySeq = null;
+        lastExitSeq = batch.seq;
         const sell: SellInput = { side: 'sell', symbol: SYMBOL, qty: held.qty, max_slippage_bps: MAX_SLIPPAGE_BPS };
         return [sell];
       }
@@ -110,6 +126,9 @@ await runBars({
     // --- Entry: flat, need 180 bars of history and a deep dip --------------
     if (closes.length <= LOOKBACK_BARS) return [];
     if (scoredSeq >= NO_ENTRY_AFTER_SCORED_BAR) return [];
+    // Re-entry cooldown: after an exit, do not chase the same dip again
+    // immediately — a fresh deep dip 60+ bars later is a new setup.
+    if (lastExitSeq !== null && batch.seq - lastExitSeq < REENTRY_COOLDOWN_BARS) return [];
     if (rsi === null || rsi >= RSI_ENTRY_BELOW) return [];
     const now = closes[closes.length - 1];
     const then = closes[closes.length - 1 - LOOKBACK_BARS];
